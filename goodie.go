@@ -2,13 +2,18 @@ package goodie
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/debspencer/html"
+	"github.com/go-xorm/xorm"
+	"xorm.io/core"
 )
 
 var (
@@ -28,21 +33,22 @@ type Server struct {
 	WriteTimeout   time.Duration
 	MaxHeaderBytes int
 
-	handlers map[string]NewHandler
+	handlers map[string]AppHandler
 }
 
 type App struct {
 	odie *Server
 	name string
+	orm  *xorm.Engine
 }
 
 type Handler interface {
-	render(w http.ResponseWriter, req *http.Request, handler Handler) // implemented by Odie
+	render(app *App, w http.ResponseWriter, req *http.Request, handler Handler) // implemented by Odie
 
 	// Init App.  Returns slice of urls showing stack (index -> page1 -> page2)
 	// Optional, if []byte is returned, then that data is written
 	Init() ([]*html.URL, []byte, error)
-	Action(string, *html.URL) bool
+	Action(string) (bool, error)
 	Header([]*html.URL)
 	Display()
 	Footer([]*html.URL)
@@ -57,7 +63,7 @@ func Init(addr string, o *Server) *Server {
 		}
 	}
 	o.Addr = addr
-	o.handlers = make(map[string]NewHandler)
+	o.handlers = make(map[string]AppHandler)
 	return o
 }
 
@@ -67,6 +73,26 @@ func (o *Server) NewApp(name string) *App {
 		name: name,
 	}
 }
+func (a *App) SetDb(db string) error {
+	orm, err := xorm.NewEngine("sqlite3", db)
+
+	if err != nil {
+		return err
+	}
+
+	orm.SetColumnMapper(core.SnakeMapper{})
+	orm.SetMaxOpenConns(5)
+	//	orm.SetLogger(&logger{})
+	orm.ShowSQL(true)
+	a.orm = orm
+
+	return nil
+}
+
+type AppHandler struct {
+	handler NewHandler
+	app     *App
+}
 
 func (a *App) Register(page string, h NewHandler) {
 	if len(page) > 0 && !strings.HasPrefix(page, "/") {
@@ -74,7 +100,10 @@ func (a *App) Register(page string, h NewHandler) {
 	}
 	page = "/" + a.name + page
 	fmt.Println("Register:", page)
-	a.odie.handlers[page] = h
+	a.odie.handlers[page] = AppHandler{
+		handler: h,
+		app:     a,
+	}
 }
 
 func (o *Server) Run() error {
@@ -90,29 +119,44 @@ func (o *Server) Run() error {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	path := req.URL.Path
-	fmt.Println("Request:", path)
-	handlerMaker, ok := s.handlers[path]
+	fmt.Println("Request:", path, req.URL.RawQuery)
+	appHandler, ok := s.handlers[path]
 	if !ok {
 		fmt.Printf("404 = '%s'\n", req.URL.Path)
 		w.WriteHeader(404)
 		return
 	}
 
-	handler := handlerMaker()
-	handler.render(w, req, handler)
+	handler := appHandler.handler()
+	handler.render(appHandler.app, w, req, handler)
 }
 
 type Odie struct {
-	Request  *http.Request
-	Response http.ResponseWriter
-	Doc      *html.Document
-	Body     *html.BodyElement
+	Request    *http.Request
+	Response   http.ResponseWriter
+	Doc        *html.Document
+	Body       *html.BodyElement
+	Url        *html.URL
+	Orm        *xorm.Engine
+	defaultUrl *html.URL
+}
+
+func (odie *Odie) renderError(err error) {
+	odie.Body = odie.Doc.Body()
+	odie.Body.AddClassName("goodieerror")
+	odie.Body.Add(html.Text(err.Error()))
+
+	b := &bytes.Buffer{}
+	odie.Doc.Render(b)
+	odie.Response.Write(b.Bytes())
 }
 
 // Render will create an HTML docuement and render the page
-func (odie *Odie) render(w http.ResponseWriter, req *http.Request, handler Handler) {
+func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, handler Handler) {
 	odie.Request = req
 	odie.Response = w
+	odie.Url = html.NewURL(req.URL)
+	odie.Orm = app.orm
 
 	// create the HTML doc, but don't add a body to it yet
 	odie.Doc = html.NewDocument()
@@ -120,7 +164,12 @@ func (odie *Odie) render(w http.ResponseWriter, req *http.Request, handler Handl
 
 	// call handler's init method.  It will return the base named.
 	urls, data, err := handler.Init()
+	if err != nil {
+		odie.renderError(err)
+		return
+	}
 
+	// urls will be a stacked list of urls for the header.  The last url will be the current page
 	var topurl *html.URL
 	if len(urls) > 0 {
 		topurl = urls[len(urls)-1]
@@ -130,10 +179,19 @@ func (odie *Odie) render(w http.ResponseWriter, req *http.Request, handler Handl
 	if refreshUrl == nil {
 		refreshUrl = odie.DefaultURL()
 	}
+	odie.defaultUrl = refreshUrl
 
-	action := refreshUrl.GetQuery("action")
+	// if there is an action query string, the perform the action
+	action := odie.Url.GetQuery("action")
 	if len(action) > 0 {
-		refresh := handler.Action(action, refreshUrl)
+		refresh, err := handler.Action(action)
+
+		if err != nil {
+			odie.renderError(err)
+			return
+		}
+
+		// if refresh, then we will want to reload the page, so a ^R refresh doesn't repeat the action
 		if refresh {
 			refreshUrl.DelQuery("action") // remove action so we don't go into an infinite loop
 
@@ -181,8 +239,13 @@ func (odie *Odie) render(w http.ResponseWriter, req *http.Request, handler Handl
 }
 
 func (odie *Odie) DefaultURL() *html.URL {
+	if odie.defaultUrl != nil {
+		return odie.defaultUrl
+	}
 	u := html.NewURL(odie.Request.URL)
 	u.Name = odie.Request.URL.Path
+	u.Query = nil
+	u.Anchor = ""
 	return u
 }
 func (odie *Odie) HomeURL() *html.URL {
@@ -190,36 +253,45 @@ func (odie *Odie) HomeURL() *html.URL {
 	u.Name = "Home"
 	u.App = ""
 	u.Page = "/"
-	fmt.Printf("%#v\n", u)
+	u.Query = nil
+	u.Anchor = ""
+	//	fmt.Printf("%#v\n", u)
 	return u
 }
 
 func (odie *Odie) NewForm(action string) *html.FormElement {
 	l := html.NewLink(odie.Request.URL.Path)
 	f := html.Form(l)
-	qs := odie.Request.URL.Query()
-	for k, vs := range qs {
-		var v string
-		if len(vs) > 0 {
-			v = vs[0]
+	/*
+		qs := odie.Request.URL.Query()
+		for k, vs := range qs {
+			var v string
+			if len(vs) > 0 {
+				v = vs[0]
+			}
+			f.Add(html.Hidden(k, v))
 		}
-		f.Add(html.Hidden(k, v))
-	}
+	*/
 	if len(action) > 0 {
 		f.Add(html.Hidden("action", action))
 	}
 	return f
 }
 
-func (odie *Odie) showHeader(which string, urls []*html.URL) {
-	div := html.Div()
-	div.AddClassName("goodie" + which)
-	h := html.Heading(3, urlStack(urls))
-	div.Add(h)
-	odie.Body.Add(div)
+// ShowHeader will return the inner div and outer div
+func (odie *Odie) ShowHeader(which string, urls []*html.URL) (*html.DivElement, *html.DivElement) {
+	outerDiv := html.Div()
+	outerDiv.AddClassName("goodie" + which)
+
+	innerDiv := urlStack(urls)
+
+	h := html.Heading(3, innerDiv)
+	outerDiv.Add(h)
+	odie.Body.Add(outerDiv)
+	return outerDiv, innerDiv
 }
 
-func urlStack(urls []*html.URL) html.Element {
+func urlStack(urls []*html.URL) *html.DivElement {
 	div := html.Div()
 	for i, url := range urls {
 		// last one
@@ -245,13 +317,13 @@ func (odie *Odie) Init() []*html.URL {
 // return value of falese will continue on to render.  A page reload will recall action
 // Controlled by presense of action= query string
 // url is passed so action can have easy access to query paramters
-func (odie *Odie) Action(action string, url *html.URL) bool {
-	return false
+func (odie *Odie) Action(action string) (bool, error) {
+	return false, nil
 }
 
 // Header will show the page header
 func (odie *Odie) Header(urls []*html.URL) {
-	odie.showHeader("header", urls)
+	odie.ShowHeader("header", urls)
 }
 
 // Display will show render page between header and footer
@@ -260,5 +332,173 @@ func (odie *Odie) Display() {
 
 // Footer will show the page footer
 func (odie *Odie) Footer(urls []*html.URL) {
-	odie.showHeader("footer", urls)
+	odie.ShowHeader("footer", urls)
+}
+
+func (odie *Odie) LoadFromQuery(iface interface{}) error {
+	rValue := reflect.ValueOf(iface)
+
+	fmt.Printf("LoadFromQuery %+v\n", iface)
+
+	switch rValue.Kind() {
+	case reflect.Ptr:
+		if rValue.IsNil() {
+			return fmt.Errorf("FromUrl: ptr is nil")
+		}
+		rValue = rValue.Elem()
+	default:
+		return fmt.Errorf("FromUrl: %T is not ptr", iface)
+	}
+
+	switch rValue.Kind() {
+	case reflect.Struct:
+		for i := 0; i != rValue.NumField(); i++ {
+			fieldValue := rValue.Field(i)
+
+			if !fieldValue.CanInterface() {
+				continue
+			}
+
+			field := rValue.Type().Field(i)
+			key := strings.ToLower(field.Name)
+
+			var q string
+			for _, key := range []string{strings.ToLower(field.Name), underscoreKey(field.Name)} {
+				q = odie.Url.GetQuery(key)
+				fmt.Printf("%s = '%s'\n", key, q)
+				if len(q) > 0 {
+					break
+				}
+			}
+			if len(q) == 0 {
+				continue
+			}
+
+			t := field.Type.Kind()
+			switch t {
+			case reflect.String:
+				fieldValue.SetString(q)
+			case reflect.Int64, reflect.Int:
+				n, err := strconv.ParseInt(q, 10, 64)
+				if err != nil {
+					return fmt.Errorf("Not an int: %s = %s (%s)", key, q, err.Error())
+				}
+				fieldValue.SetInt(n)
+			case reflect.Struct:
+				iface := rValue.Field(i).Interface()
+				switch iface.(type) {
+				case sql.NullInt64:
+					n, err := strconv.ParseInt(q, 10, 64)
+					if err != nil {
+						return fmt.Errorf("Not an int: %s = %s (%s)", key, q, err.Error())
+					}
+					si64 := sql.NullInt64{
+						Valid: true,
+						Int64: n,
+					}
+					v := reflect.ValueOf(si64)
+					fieldValue.Set(v)
+				default:
+					fmt.Println("Unsuported struct type %T %T for key: %s", field, iface, key)
+					return fmt.Errorf("Unsuported type %T %T for key: %s", field, iface, key)
+				}
+			default:
+				fmt.Println("Unsuported type %t for key: %s", field, key)
+				return fmt.Errorf("Unsuported type %T for key: %s", field, key)
+			}
+
+		}
+	case reflect.Slice, reflect.Array:
+		return fmt.Errorf("FromUrl: Can not decode %T", iface)
+	case reflect.Map:
+		return fmt.Errorf("FromUrl: Can not decode %T", iface)
+	default:
+		return fmt.Errorf("FromUrl: Can not decode %T", iface)
+	}
+	return nil
+}
+
+func (odie *Odie) DbInsert(v interface{}) error {
+	if odie.Orm == nil {
+		return fmt.Errorf("DB not configured")
+	}
+
+	affected, err := odie.Orm.Insert(v)
+	return expect("inserted", affected, 1, err, v)
+}
+func (odie *Odie) DbGet(id int64, v interface{}) error {
+	if odie.Orm == nil {
+		return fmt.Errorf("DB not configured")
+	}
+
+	// has, err := odie.Orm.Where(Eq{"id": id}).Get(v)
+	has, err := odie.Orm.ID(id).Get(v)
+	return hasRecords(has, err, id)
+}
+func (odie *Odie) DbDelete(v interface{}) error {
+	if odie.Orm == nil {
+		return fmt.Errorf("DB not configured")
+	}
+
+	affected, err := odie.Orm.Delete(v)
+	return expect("deleted", affected, 1, err, v)
+}
+func (odie *Odie) DbUpdate(id int64, v interface{}) error {
+	if odie.Orm == nil {
+		return fmt.Errorf("DB not configured")
+	}
+
+	affected, err := odie.Orm.ID(id).Update(v)
+	return expect("updated", affected, 1, err, v)
+}
+
+func (odie *Odie) GetAll(v interface{}) error {
+	if odie.Orm == nil {
+		return fmt.Errorf("DB not configured")
+	}
+
+	return odie.Orm.Find(v)
+}
+
+func (odie *Odie) GetOrder(v interface{}, order string) error {
+	if odie.Orm == nil {
+		return fmt.Errorf("DB not configured")
+	}
+
+	return odie.Orm.OrderBy(order).Find(v)
+}
+
+func expect(what string, affected int64, expected int64, err error, i interface{}) error {
+	if err != nil {
+		return err
+	}
+	if affected != expected {
+		return fmt.Errorf("Expected %d rows %s, Got %d for record %+v", expected, what, affected, i)
+	}
+	return nil
+}
+func hasRecords(has bool, err error, id int64) error {
+	if err != nil {
+		return err
+	}
+	if !has {
+		return fmt.Errorf("No Records Found for id %d", id)
+	}
+	return nil
+}
+
+func underscoreKey(key string) string {
+	runes := make([]rune, 0, len(key)*2)
+	for i, r := range key {
+		isUpper := 'A' <= r && r <= 'Z'
+		if isUpper {
+			if i > 0 {
+				runes = append(runes, '_')
+			}
+			r -= ('A' - 'a')
+		}
+		runes = append(runes, r)
+	}
+
+	return string(runes)
 }
