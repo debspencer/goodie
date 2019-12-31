@@ -155,7 +155,10 @@ func (odie *Odie) renderError(err error) {
 func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, handler Handler) {
 	odie.Request = req
 	odie.Response = w
-	odie.Url = html.NewURL(req.URL)
+
+	req.ParseForm()
+	odie.Url = html.NewURL(req.URL, req.Form)
+
 	odie.Orm = app.orm
 
 	// create the HTML doc, but don't add a body to it yet
@@ -242,14 +245,14 @@ func (odie *Odie) DefaultURL() *html.URL {
 	if odie.defaultUrl != nil {
 		return odie.defaultUrl
 	}
-	u := html.NewURL(odie.Request.URL)
+	u := html.NewURL(odie.Request.URL, nil)
 	u.Name = odie.Request.URL.Path
 	u.Query = nil
 	u.Anchor = ""
 	return u
 }
 func (odie *Odie) HomeURL() *html.URL {
-	u := html.NewURL(odie.Request.URL)
+	u := html.NewURL(odie.Request.URL, nil)
 	u.Name = "Home"
 	u.App = ""
 	u.Page = "/"
