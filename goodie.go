@@ -1,7 +1,6 @@
 package goodie
 
 import (
-	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -146,9 +145,7 @@ func (odie *Odie) renderError(err error) {
 	odie.Body.AddClassName("goodieerror")
 	odie.Body.Add(html.Text(err.Error()))
 
-	b := &bytes.Buffer{}
-	odie.Doc.Render(b)
-	odie.Response.Write(b.Bytes())
+	odie.Doc.Render(odie.Response)
 }
 
 // Render will create an HTML docuement and render the page
@@ -199,9 +196,7 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 			refreshUrl.DelQuery("action") // remove action so we don't go into an infinite loop
 
 			odie.Doc.Head().Add(html.MetaRefresh(0, refreshUrl.Link()))
-			b := &bytes.Buffer{}
-			odie.Doc.Render(b)
-			odie.Response.Write(b.Bytes())
+			odie.Doc.Render(odie.Resposne)
 			return
 		}
 	}
@@ -236,9 +231,7 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 	handler.Display()
 	handler.Footer(urls)
 
-	b := &bytes.Buffer{}
-	odie.Doc.Render(b)
-	odie.Response.Write(b.Bytes())
+	odie.Doc.Render(odie.Response)
 }
 
 func (odie *Odie) DefaultURL() *html.URL {
