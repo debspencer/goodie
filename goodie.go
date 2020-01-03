@@ -196,7 +196,7 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 			refreshUrl.DelQuery("action") // remove action so we don't go into an infinite loop
 
 			odie.Doc.Head().Add(html.MetaRefresh(0, refreshUrl.Link()))
-			odie.Doc.Render(odie.Resposne)
+			odie.Doc.Render(odie.Response)
 			return
 		}
 	}
