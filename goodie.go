@@ -47,7 +47,7 @@ type Handler interface {
 	// Init App.  Returns slice of urls showing stack (index -> page1 -> page2)
 	// Optional, if []byte is returned, then that data is written
 	Init() ([]*html.URL, []byte, error)
-	Action(string) (bool, error)
+	Action(string) (*html.URL, error) // return a URL to refersh to when complete
 	Header([]*html.URL)
 	Display()
 	Footer([]*html.URL)
@@ -175,16 +175,15 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 		topurl = urls[len(urls)-1]
 	}
 
-	refreshUrl := topurl
-	if refreshUrl == nil {
-		refreshUrl = odie.DefaultURL()
+	odie.defaultUrl = topurl
+	if odie.defaultUrl == nil {
+		odie.defaultUrl = odie.DefaultURL()
 	}
-	odie.defaultUrl = refreshUrl
 
 	// if there is an action query string, the perform the action
 	action := odie.Url.GetQuery("action")
 	if len(action) > 0 {
-		refresh, err := handler.Action(action)
+		refreshUrl, err := handler.Action(action)
 
 		if err != nil {
 			odie.renderError(err)
@@ -192,7 +191,7 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 		}
 
 		// if refresh, then we will want to reload the page, so a ^R refresh doesn't repeat the action
-		if refresh {
+		if refreshUrl != nil {
 			refreshUrl.DelQuery("action") // remove action so we don't go into an infinite loop
 
 			odie.Doc.Head().Add(html.MetaRefresh(0, refreshUrl.Link()))
@@ -308,13 +307,13 @@ func (odie *Odie) Init() []*html.URL {
 	return []*html.URL{odie.DefaultURL()}
 }
 
-// Perform an action before the page loads.
-// return value of true = refresh page without action query string.  The allows for db updates and a page reload would not do a double action
+// Action will perform an action before the page loads.
+// return value of url of refresh page without action query string.  The allows for db updates and a page reload would not do a double action
 // return value of falese will continue on to render.  A page reload will recall action
 // Controlled by presense of action= query string
 // url is passed so action can have easy access to query paramters
-func (odie *Odie) Action(action string) (bool, error) {
-	return false, nil
+func (odie *Odie) Action(action string) (*html.URL, error) {
+	return nil, nil
 }
 
 // Header will show the page header
