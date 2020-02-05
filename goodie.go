@@ -33,6 +33,7 @@ type Server struct {
 	MaxHeaderBytes int
 
 	handlers map[string]AppHandler
+	favicon  []byte
 }
 
 type App struct {
@@ -66,12 +67,17 @@ func Init(addr string, o *Server) *Server {
 	return o
 }
 
-func (o *Server) NewApp(name string) *App {
+func (s *Server) NewApp(name string) *App {
 	return &App{
-		odie: o,
+		odie: s,
 		name: name,
 	}
 }
+
+func (s *Server) AddFavicon(favicon []byte) {
+	s.favicon = favicon
+}
+
 func (a *App) SetDb(db string) error {
 	orm, err := xorm.NewEngine("sqlite3", db)
 
@@ -121,6 +127,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	fmt.Println("Request:", path, req.URL.RawQuery)
 	appHandler, ok := s.handlers[path]
 	if !ok {
+		if path == "/favicon.ico" && len(s.favicon) > 0 {
+			s.showFavicon(w)
+			return
+		}
+
 		fmt.Printf("404 = '%s'\n", req.URL.Path)
 		w.WriteHeader(404)
 		return
@@ -128,6 +139,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	handler := appHandler.handler()
 	handler.render(appHandler.app, w, req, handler)
+}
+func (s *Server) showFavicon(w http.ResponseWriter) {
+	w.Header().Add("Content-type", "image/x-icon")
+	w.Write(s.favicon)
 }
 
 type Odie struct {
