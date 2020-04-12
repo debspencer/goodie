@@ -48,6 +48,7 @@ type Handler interface {
 	// Init App.  Returns slice of urls showing stack (index -> page1 -> page2)
 	// Optional, if []byte is returned, then that data is written
 	Init() ([]*html.URL, []byte, error)
+	RenderError(err error)
 	Action(string) (*html.URL, error) // return a URL to refersh to when complete
 	Header([]*html.URL)
 	Display()
@@ -155,14 +156,6 @@ type Odie struct {
 	defaultUrl *html.URL
 }
 
-func (odie *Odie) renderError(err error) {
-	odie.Body = odie.Doc.Body()
-	odie.Body.AddClassName("goodieerror")
-	odie.Body.Add(html.Text(err.Error()))
-
-	odie.Doc.Render(odie.Response)
-}
-
 // Render will create an HTML docuement and render the page
 func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, handler Handler) {
 	odie.Request = req
@@ -180,7 +173,7 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 	// call handler's init method.  It will return the base named.
 	urls, data, err := handler.Init()
 	if err != nil {
-		odie.renderError(err)
+		odie.RenderError(err)
 		return
 	}
 
@@ -201,7 +194,7 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 		refreshUrl, err := handler.Action(action)
 
 		if err != nil {
-			odie.renderError(err)
+			odie.RenderError(err)
 			return
 		}
 
@@ -322,11 +315,19 @@ func (odie *Odie) Init() []*html.URL {
 	return []*html.URL{odie.DefaultURL()}
 }
 
+// RednerError is called anytime a fatal error is encountered
+func (odie *Odie) RenderError(err error) {
+	odie.Body = odie.Doc.Body()
+	odie.Body.AddClassName("goodieerror")
+	odie.Body.Add(html.Text(err.Error()))
+
+	odie.Doc.Render(odie.Response)
+}
+
 // Action will perform an action before the page loads.
 // return value of url of refresh page without action query string.  The allows for db updates and a page reload would not do a double action
-// return value of falese will continue on to render.  A page reload will recall action
+// error value of nil will continue on to render.  A page reload will recall action
 // Controlled by presense of action= query string
-// url is passed so action can have easy access to query paramters
 func (odie *Odie) Action(action string) (*html.URL, error) {
 	return nil, nil
 }
