@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path"
 	"reflect"
 	"strconv"
 	"strings"
@@ -34,6 +36,7 @@ type Server struct {
 
 	handlers map[string]AppHandler
 	favicon  []byte
+	home     string
 }
 
 type App struct {
@@ -62,6 +65,7 @@ func Init(addr string, o *Server) *Server {
 			WriteTimeout:   defaultWriteTimeout,
 			MaxHeaderBytes: defaultMaxHeaderBytes,
 		}
+		o.SetHome(os.Getenv("GOODIE_HOME"))
 	}
 	o.Addr = addr
 	o.handlers = make(map[string]AppHandler)
@@ -79,7 +83,17 @@ func (s *Server) AddFavicon(favicon []byte) {
 	s.favicon = favicon
 }
 
+func (s *Server) SetHome(home string) {
+	s.home = home
+}
+
+func (s *Server) Path(file string) string {
+	return path.Join(s.home, file)
+}
+
 func (a *App) SetDb(db string) error {
+	db = a.odie.Path(db)
+	fmt.Println("SetDB", db)
 	orm, err := xorm.NewEngine("sqlite3", db)
 
 	if err != nil {
@@ -110,6 +124,10 @@ func (a *App) Register(page string, h NewHandler) {
 		handler: h,
 		app:     a,
 	}
+}
+
+func (a *App) Path(element string) string {
+	return a.odie.Path(element)
 }
 
 func (o *Server) Run() error {
@@ -153,6 +171,7 @@ type Odie struct {
 	Body       *html.BodyElement
 	Url        *html.URL
 	Orm        *xorm.Engine
+	Path       string // Path to applicatio's base directory
 	defaultUrl *html.URL
 }
 
@@ -161,10 +180,14 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 	odie.Request = req
 	odie.Response = w
 
+	w.Header().Add("Expires", "Sat, Jan 1 2000 00:00:00 GMT")
+	w.Header().Add("Cache-Control", "no-cache, no-store, must-revalidate")
+
 	req.ParseForm()
 	odie.Url = html.NewURL(req.URL, req.Form)
 
 	odie.Orm = app.orm
+	odie.Path = app.Path(app.name)
 
 	// create the HTML doc, but don't add a body to it yet
 	odie.Doc = html.NewDocument()
@@ -174,6 +197,11 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 	urls, data, err := handler.Init()
 	if err != nil {
 		odie.RenderError(err)
+		return
+	}
+
+	if data != nil {
+		odie.Response.Write(data)
 		return
 	}
 
@@ -223,11 +251,6 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 		}
 	}
 
-	if data != nil {
-		odie.Response.Write(data)
-		return
-	}
-
 	// Set a default title if init did not do so
 	title := odie.Doc.Head().GetTitle()
 	if len(title) == 0 && topurl != nil {
@@ -239,6 +262,10 @@ func (odie *Odie) render(app *App, w http.ResponseWriter, req *http.Request, han
 	handler.Footer(urls)
 
 	odie.Doc.Render(odie.Response)
+}
+
+func (odie *Odie) SetContentType(mimeType html.MimeType) {
+	odie.Response.Header().Add("Content-type", mimeType.Mime)
 }
 
 func (odie *Odie) DefaultURL() *html.URL {
