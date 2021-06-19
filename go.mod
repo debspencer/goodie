@@ -1,4 +1,4 @@
-module githim.com/debspencer/goodie
+module github.com/debspencer/goodie
 
 go 1.16
 
