@@ -14,8 +14,8 @@ github.com/cockroachdb/apd v1.1.0/go.mod h1:8Sl8LxpKi29FqWXR16WEFZRNSz3SoPzUzeMe
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/debspencer/html v0.0.0-20200713161250-135431459da5 h1:MSoO7eirJyT7D9Jy7zoEu7Y5qP/LbwFZYAs24ArMDP8=
-github.com/debspencer/html v0.0.0-20200713161250-135431459da5/go.mod h1:ijZj1+GTzrTwwOZ2CXgO3MaZ3Y6hisWd1w2oXRArZXo=
+github.com/debspencer/html v0.0.0-20210619175955-fc4133eb39e8 h1:HDvKGqcBNhUAMRwdvJ9fmIJi1k7MFtI7JM7c50DsCfw=
+github.com/debspencer/html v0.0.0-20210619175955-fc4133eb39e8/go.mod h1:okvOu+QyM4hKqMOntJN5rE457xkaVzqv6QT6jr/KGyE=
 github.com/denisenkom/go-mssqldb v0.0.0-20190707035753-2be1aa521ff4 h1:YcpmyvADGYw5LqMnHqSkyIELsHCGF6PkrmM31V8rF7o=
 github.com/denisenkom/go-mssqldb v0.0.0-20190707035753-2be1aa521ff4/go.mod h1:zAg7JM8CkOJ43xKXIj7eRO9kmWm/TW578qo+oDO6tuM=
 github.com/eapache/go-resiliency v1.1.0/go.mod h1:kFI+JgMyC7bLPUVY133qvEBtVayf5mFgVsvEsIPBvNs=
